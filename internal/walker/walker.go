@@ -1,5 +1,5 @@
 // Package walker recursively traverses a directory tree and groups files by size.
-// Files with unique sizes are discarded (they cannot have duplicates).
+// Files with unique sizes are discarded early since they cannot have duplicates.
 package walker
 
 import (
@@ -20,19 +20,25 @@ type Options struct {
 // Walk traverses root and returns groups of files that share the same size.
 // Only groups with 2+ files are returned (potential duplicates).
 func Walk(root string, opts Options) ([][]model.FileEntry, int, int64, error) {
+	// map[fileSize] -> list of files with that size.
+	// In Go, maps are reference types — no need to pass by pointer.
 	sizeMap := make(map[int64][]model.FileEntry)
 	totalFiles := 0
 	var totalBytes int64
 
+	// filepath.WalkDir is Go's stdlib recursive directory traversal.
+	// The callback fires for every file/dir. Return filepath.SkipDir to skip a subtree.
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // skip unreadable entries
+			// Return nil (not the error) to skip unreadable entries without aborting the walk.
+			return nil
 		}
 
-		// Skip excluded directories
+		// Skip excluded directories.
 		if d.IsDir() {
 			name := d.Name()
 			for _, exc := range opts.Excludes {
+				// strings.EqualFold = case-insensitive comparison (like Java's equalsIgnoreCase)
 				if strings.EqualFold(name, exc) {
 					return filepath.SkipDir
 				}
@@ -40,11 +46,12 @@ func Walk(root string, opts Options) ([][]model.FileEntry, int, int64, error) {
 			return nil
 		}
 
-		// Skip non-regular files (symlinks, devices, etc.)
+		// d.Type().IsRegular() filters out symlinks, devices, pipes, etc.
 		if !d.Type().IsRegular() {
 			return nil
 		}
 
+		// d.Info() does the actual stat syscall to get size/modtime.
 		info, err := d.Info()
 		if err != nil {
 			return nil
@@ -63,6 +70,9 @@ func Walk(root string, opts Options) ([][]model.FileEntry, int, int64, error) {
 			absPath = path
 		}
 
+		// append() grows the slice if needed (like ArrayList.add in Java).
+		// If the key doesn't exist yet, sizeMap[size] returns a nil slice,
+		// and append on a nil slice works fine (creates a new one).
 		sizeMap[size] = append(sizeMap[size], model.FileEntry{
 			Path:    absPath,
 			Size:    size,
@@ -76,7 +86,8 @@ func Walk(root string, opts Options) ([][]model.FileEntry, int, int64, error) {
 		return nil, 0, 0, err
 	}
 
-	// Keep only groups with 2+ files (potential duplicates)
+	// Filter: keep only groups with 2+ files (same size = maybe duplicates).
+	// range over a map gives (key, value) pairs in random order.
 	var groups [][]model.FileEntry
 	for _, files := range sizeMap {
 		if len(files) >= 2 {
@@ -84,10 +95,11 @@ func Walk(root string, opts Options) ([][]model.FileEntry, int, int64, error) {
 		}
 	}
 
+	// Go supports multiple return values (no tuples or wrapper objects needed).
 	return groups, totalFiles, totalBytes, nil
 }
 
-// WalkFromInfo is a convenience that wraps Walk and validates the root path.
+// WalkFromInfo validates that root is a directory, then calls Walk.
 func WalkFromInfo(root string, opts Options) ([][]model.FileEntry, int, int64, error) {
 	info, err := os.Stat(root)
 	if err != nil {

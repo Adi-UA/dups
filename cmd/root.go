@@ -15,7 +15,10 @@ import (
 )
 
 // Run parses flags and executes the duplicate scan pipeline.
+// Returns 0 on success, 1 on error. Called from main().
 func Run() int {
+	// Go's flag package is simpler than argparse/cobra. You declare flags, call Parse(),
+	// then read the values. Flags must come before positional args (no mixing).
 	var (
 		minSize    int64
 		jsonMode   bool
@@ -32,20 +35,22 @@ func Run() int {
 	flag.BoolVar(&dryRun, "dry-run", false, "Show what would be deleted without deleting")
 	flag.BoolVar(&noDelete, "no-delete", false, "Report only, no delete prompt")
 	flag.StringVar(&excludeRaw, "exclude", ".git", "Comma-separated directory names to skip")
-	flag.IntVar(&workers, "workers", 0, "Number of hash workers (0 = NumCPU)")
+	flag.IntVar(&workers, "workers", 0, "Number of hash workers (0 = auto-detect CPU count)")
 	flag.Parse()
 
+	// flag.Arg(0) is the first positional argument after all flags.
 	root := "."
 	if flag.NArg() > 0 {
 		root = flag.Arg(0)
 	}
 
+	// strings.Split + TrimSpace = splitting a CSV string into clean tokens.
 	excludes := strings.Split(excludeRaw, ",")
 	for i := range excludes {
 		excludes[i] = strings.TrimSpace(excludes[i])
 	}
 
-	// Stage 1: Walk and group by size
+	// Stage 1: Walk and group by size.
 	sizeGroups, totalFiles, totalBytes, err := walker.WalkFromInfo(root, walker.Options{
 		MinSize:  minSize,
 		Excludes: excludes,
@@ -55,15 +60,16 @@ func Run() int {
 		return 1
 	}
 
-	// Stage 2: Hash and find duplicates
+	// Stage 2: Hash and find duplicates.
+	// Workers default to 0 which means runtime.NumCPU() inside the hasher.
 	dupGroups := hasher.Deduplicate(sizeGroups, workers)
 
-	// Sort by wasted space descending
+	// Sort by wasted space descending (biggest waste first).
 	sort.Slice(dupGroups, func(i, j int) bool {
 		return dupGroups[i].WastedBytes > dupGroups[j].WastedBytes
 	})
 
-	// Build result
+	// Build the result struct.
 	var duplicateFiles int
 	var wastedBytes int64
 	for _, g := range dupGroups {
@@ -79,7 +85,7 @@ func Run() int {
 		WastedBytes:    wastedBytes,
 	}
 
-	// Stage 3: Report
+	// Stage 3: Report.
 	if summary {
 		fmt.Printf("Files: %d | Size: %s | Duplicates: %d | Wasted: %s\n",
 			result.TotalFiles, formatBytes(result.TotalBytes),
@@ -96,7 +102,7 @@ func Run() int {
 		return 0
 	}
 
-	// Text mode with optional interactive deletion
+	// Text mode: interactive delete prompt unless --no-delete or --dry-run.
 	interactive := !noDelete && !dryRun
 	rep := reporter.NewText(interactive || dryRun, dryRun)
 	if err := rep.Report(result); err != nil {
