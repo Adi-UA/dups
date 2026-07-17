@@ -5,20 +5,9 @@
 Fast duplicate file finder. Scans a directory tree, identifies files with
 identical content, shows wasted space, and lets you delete the copies.
 
-```bash
-dups ~/Downloads
-```
-
-```
-Scanning ~/Downloads... 4,218 files, 12.3 GB total
-Found 847 MB of duplicates across 156 files (37 groups)
-
-GROUP 1 — 234.5 MB wasted (3 copies)
-  ✓ ~/Downloads/video-2024.mp4          234.5 MB  2024-03-15
-  ✗ ~/Downloads/video-2024 (1).mp4      234.5 MB  2024-03-15
-  ✗ ~/Downloads/old/video-2024.mp4      234.5 MB  2024-01-02
-...
-```
+<p align="center">
+  <img src="assets/demo.png" alt="dups scanning a directory and showing duplicate groups" width="700" />
+</p>
 
 ## Install
 
