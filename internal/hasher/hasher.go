@@ -24,10 +24,9 @@ const partialHashSize = 4096
 // the machine's core count (e.g., 8 on an M1 Mac, 4 on the OCI ARM VM).
 func Deduplicate(sizeGroups [][]model.FileEntry, numWorkers int) []model.DuplicateGroup {
 	if numWorkers <= 0 {
-		// runtime.NumCPU() returns logical cores. This is the optimal default
-		// for I/O-heavy work (file reads) — one goroutine per core keeps the
-		// disk saturated without excessive context switching.
-		numWorkers = runtime.NumCPU()
+		// Use 1/4 of available CPUs to avoid saturating the machine.
+		// Minimum 1 worker even on single-core systems.
+		numWorkers = max(1, runtime.NumCPU()/4)
 	}
 
 	// Separate small files (hash directly) from large files (two-pass).

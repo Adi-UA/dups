@@ -15,6 +15,21 @@ identical content, shows wasted space, and lets you delete the copies.
 go install github.com/Adi-UA/dups@latest
 ```
 
+## Build from Source
+
+```bash
+git clone https://github.com/Adi-UA/dups.git
+cd dups
+go build -o dups .
+./dups --help
+```
+
+## Run Tests
+
+```bash
+go test ./... -race -count=1
+```
+
 ## Features
 
 - Single binary, zero dependencies, cross-platform (macOS, Linux, Windows)
