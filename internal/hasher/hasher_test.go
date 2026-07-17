@@ -82,6 +82,40 @@ func TestDeduplicateMultipleGroups(t *testing.T) {
 	}
 }
 
+func TestDeduplicateLargeFilesUsePartialHash(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create two 2MB files with identical content
+	bigContent := make([]byte, 2<<20)
+	for i := range bigContent {
+		bigContent[i] = byte(i % 256)
+	}
+	os.WriteFile(filepath.Join(dir, "big1.bin"), bigContent, 0o644)
+	os.WriteFile(filepath.Join(dir, "big2.bin"), bigContent, 0o644)
+
+	// Create a 2MB file with different content (same size, different first bytes)
+	diffContent := make([]byte, 2<<20)
+	for i := range diffContent {
+		diffContent[i] = byte((i + 1) % 256)
+	}
+	os.WriteFile(filepath.Join(dir, "big3.bin"), diffContent, 0o644)
+
+	entries := []model.FileEntry{
+		{Path: filepath.Join(dir, "big1.bin"), Size: 2 << 20},
+		{Path: filepath.Join(dir, "big2.bin"), Size: 2 << 20},
+		{Path: filepath.Join(dir, "big3.bin"), Size: 2 << 20},
+	}
+
+	groups := Deduplicate([][]model.FileEntry{entries}, 2)
+
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 duplicate group, got %d", len(groups))
+	}
+	if len(groups[0].Files) != 2 {
+		t.Errorf("expected 2 files in group, got %d", len(groups[0].Files))
+	}
+}
+
 func write(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

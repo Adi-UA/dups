@@ -20,13 +20,17 @@ func Run() int {
 		minSize    int64
 		jsonMode   bool
 		summary    bool
+		dryRun     bool
 		excludeRaw string
 		workers    int
+		noDelete   bool
 	)
 
-	flag.Int64Var(&minSize, "min-size", 0, "Minimum file size in bytes (e.g., 1048576 for 1MB)")
+	flag.Int64Var(&minSize, "min-size", 0, "Minimum file size in bytes")
 	flag.BoolVar(&jsonMode, "json", false, "Output results as JSON")
 	flag.BoolVar(&summary, "summary", false, "Show only summary stats")
+	flag.BoolVar(&dryRun, "dry-run", false, "Show what would be deleted without deleting")
+	flag.BoolVar(&noDelete, "no-delete", false, "Report only, no delete prompt")
 	flag.StringVar(&excludeRaw, "exclude", ".git", "Comma-separated directory names to skip")
 	flag.IntVar(&workers, "workers", 0, "Number of hash workers (0 = NumCPU)")
 	flag.Parse()
@@ -76,20 +80,25 @@ func Run() int {
 	}
 
 	// Stage 3: Report
-	var rep reporter.Reporter
-	if jsonMode {
-		rep = reporter.NewJSON()
-	} else {
-		rep = reporter.NewText()
-	}
-
 	if summary {
 		fmt.Printf("Files: %d | Size: %s | Duplicates: %d | Wasted: %s\n",
-			result.TotalFiles, formatBytesCmd(result.TotalBytes),
-			result.DuplicateFiles, formatBytesCmd(result.WastedBytes))
+			result.TotalFiles, formatBytes(result.TotalBytes),
+			result.DuplicateFiles, formatBytes(result.WastedBytes))
 		return 0
 	}
 
+	if jsonMode {
+		rep := reporter.NewJSON()
+		if err := rep.Report(result); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	// Text mode with optional interactive deletion
+	interactive := !noDelete && !dryRun
+	rep := reporter.NewText(interactive || dryRun, dryRun)
 	if err := rep.Report(result); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -98,7 +107,7 @@ func Run() int {
 	return 0
 }
 
-func formatBytesCmd(b int64) string {
+func formatBytes(b int64) string {
 	switch {
 	case b >= 1<<30:
 		return fmt.Sprintf("%.1f GB", float64(b)/float64(1<<30))
