@@ -27,6 +27,7 @@ func Run() int {
 		excludeRaw string
 		workers    int
 		noDelete   bool
+		batch      bool
 	)
 
 	flag.Int64Var(&minSize, "min-size", 0, "Minimum file size in bytes")
@@ -34,8 +35,9 @@ func Run() int {
 	flag.BoolVar(&summary, "summary", false, "Show only summary stats")
 	flag.BoolVar(&dryRun, "dry-run", false, "Show what would be deleted without deleting")
 	flag.BoolVar(&noDelete, "no-delete", false, "Report only, no delete prompt")
+	flag.BoolVar(&batch, "batch", false, "Single delete prompt for all groups (non-interactive)")
 	flag.StringVar(&excludeRaw, "exclude", ".git", "Comma-separated directory names to skip")
-	flag.IntVar(&workers, "workers", 0, "Number of hash workers (0 = auto-detect CPU count)")
+	flag.IntVar(&workers, "workers", 0, "Number of hash workers (0 = auto: NumCPU/4)")
 	flag.Parse()
 
 	// flag.Arg(0) is the first positional argument after all flags.
@@ -102,9 +104,13 @@ func Run() int {
 		return 0
 	}
 
-	// Text mode: interactive delete prompt unless --no-delete or --dry-run.
-	interactive := !noDelete && !dryRun
-	rep := reporter.NewText(interactive || dryRun, dryRun)
+	// Text mode: default is interactive (per-group y/n/q prompts).
+	// --batch = single prompt for all groups at once.
+	// --no-delete = report only, no prompts.
+	// --dry-run = show what would be deleted (works with both modes).
+	interactive := !noDelete && !batch
+	batchDelete := batch && !noDelete
+	rep := reporter.NewText(interactive, batchDelete, dryRun)
 	if err := rep.Report(result); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1

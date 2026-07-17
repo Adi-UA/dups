@@ -16,21 +16,22 @@ type TextReporter struct {
 	Writer      io.Writer
 	Reader      io.Reader
 	DryRun      bool
-	Interactive bool
+	Interactive bool // per-group prompts (y/n/q per group)
+	BatchDelete bool // single prompt for all groups at once
 }
 
 // NewText creates a TextReporter that writes to stdout and reads from stdin.
-func NewText(interactive bool, dryRun bool) *TextReporter {
+func NewText(interactive bool, batchDelete bool, dryRun bool) *TextReporter {
 	return &TextReporter{
 		Writer:      os.Stdout,
 		Reader:      os.Stdin,
 		Interactive: interactive,
+		BatchDelete: batchDelete,
 		DryRun:      dryRun,
 	}
 }
 
 // Report outputs the scan result as a human-readable summary.
-// If Interactive is true, prompts the user to delete duplicates.
 func (r *TextReporter) Report(result model.ScanResult) error {
 	if len(result.Groups) == 0 {
 		fmt.Fprintf(r.Writer, "Scanned %d files (%s). No duplicates found.\n",
@@ -38,7 +39,7 @@ func (r *TextReporter) Report(result model.ScanResult) error {
 		return nil
 	}
 
-	// Sort groups by wasted bytes descending
+	// Sort groups by wasted bytes descending.
 	sort.Slice(result.Groups, func(i, j int) bool {
 		return result.Groups[i].WastedBytes > result.Groups[j].WastedBytes
 	})
@@ -48,29 +49,74 @@ func (r *TextReporter) Report(result model.ScanResult) error {
 	fmt.Fprintf(r.Writer, "Found %s of duplicates across %d files (%d groups)\n\n",
 		formatBytes(result.WastedBytes), result.DuplicateFiles, len(result.Groups))
 
-	for i, g := range result.Groups {
-		fmt.Fprintf(r.Writer, "\033[1mGROUP %d\033[0m — %s wasted (%d copies)\n",
-			i+1, formatBytes(g.WastedBytes), len(g.Files))
-		for j, f := range g.Files {
-			marker := "\033[32m✓\033[0m" // green check (keep)
-			if j > 0 {
-				marker = "\033[31m✗\033[0m" // red x (duplicate)
-			}
-			fmt.Fprintf(r.Writer, "  %s %s  %s  %s\n",
-				marker, f.Path, formatBytes(f.Size), f.ModTime.Format("2006-01-02"))
-		}
-		fmt.Fprintln(r.Writer)
+	if r.Interactive {
+		return r.reportInteractive(result)
 	}
 
-	if r.Interactive {
-		return r.promptDelete(result)
+	// Print all groups first.
+	for i, g := range result.Groups {
+		r.printGroup(i, g)
+	}
+
+	if r.BatchDelete || r.DryRun {
+		return r.promptBatchDelete(result)
 	}
 
 	return nil
 }
 
-func (r *TextReporter) promptDelete(result model.ScanResult) error {
-	// Collect all files marked for deletion (all copies except the first in each group)
+// reportInteractive shows each group one at a time and asks y/n/q per group.
+func (r *TextReporter) reportInteractive(result model.ScanResult) error {
+	scanner := bufio.NewScanner(r.Reader)
+	var totalDeleted int
+	var totalReclaimed int64
+
+	for i, g := range result.Groups {
+		r.printGroup(i, g)
+
+		// Show duplicates that would be deleted (all except first).
+		fmt.Fprintf(r.Writer, "  Delete %d duplicate(s) (%s)? [\033[32my\033[0m/\033[31mn\033[0m/\033[33mq\033[0m] ",
+			len(g.Files)-1, formatBytes(g.WastedBytes))
+
+		if !scanner.Scan() {
+			break
+		}
+		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+
+		switch answer {
+		case "q", "quit":
+			fmt.Fprintln(r.Writer, "Stopped.")
+			return nil
+		case "y", "yes":
+			for _, f := range g.Files[1:] {
+				if r.DryRun {
+					fmt.Fprintf(r.Writer, "  \033[33m[dry-run]\033[0m would delete %s\n", f.Path)
+				} else {
+					if err := os.Remove(f.Path); err != nil {
+						fmt.Fprintf(r.Writer, "  \033[31mfailed\033[0m %s: %v\n", f.Path, err)
+					} else {
+						fmt.Fprintf(r.Writer, "  \033[32mdeleted\033[0m %s\n", f.Path)
+						totalDeleted++
+						totalReclaimed += f.Size
+					}
+				}
+			}
+		default:
+			fmt.Fprintln(r.Writer, "  Skipped.")
+		}
+		fmt.Fprintln(r.Writer)
+	}
+
+	if totalDeleted > 0 {
+		fmt.Fprintf(r.Writer, "Done. Deleted %d files, reclaimed %s.\n",
+			totalDeleted, formatBytes(totalReclaimed))
+	}
+
+	return nil
+}
+
+// promptBatchDelete asks once for all groups (non-interactive bulk mode).
+func (r *TextReporter) promptBatchDelete(result model.ScanResult) error {
 	var toDelete []string
 	var reclaimBytes int64
 
@@ -120,6 +166,19 @@ func (r *TextReporter) promptDelete(result model.ScanResult) error {
 	fmt.Fprintf(r.Writer, "\nDeleted %d files, reclaimed %s.\n",
 		deleted, formatBytes(reclaimBytes))
 	return nil
+}
+
+func (r *TextReporter) printGroup(i int, g model.DuplicateGroup) {
+	fmt.Fprintf(r.Writer, "\033[1mGROUP %d\033[0m — %s wasted (%d copies)\n",
+		i+1, formatBytes(g.WastedBytes), len(g.Files))
+	for j, f := range g.Files {
+		marker := "\033[32m✓\033[0m"
+		if j > 0 {
+			marker = "\033[31m✗\033[0m"
+		}
+		fmt.Fprintf(r.Writer, "  %s %s  %s  %s\n",
+			marker, f.Path, formatBytes(f.Size), f.ModTime.Format("2006-01-02"))
+	}
 }
 
 func formatBytes(b int64) string {
