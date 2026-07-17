@@ -71,7 +71,7 @@ dups . --exclude "node_modules" --exclude ".git"
 5. Full SHA-256 hash of remaining candidates (concurrent worker pool)
 6. Group by identical hash, report, offer deletion
 
-See [DESIGN.md](DESIGN.md) for architecture details.
+See the source code in `internal/` for implementation details.
 
 ## License
 
